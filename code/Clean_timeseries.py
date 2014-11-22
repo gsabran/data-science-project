@@ -1,7 +1,7 @@
 
 # coding: utf-8
 
-# In[278]:
+# In[1]:
 
 import pandas as pd # pandas
 import numpy as np
@@ -30,13 +30,13 @@ rcParams['font.size'] = 14
 rcParams['patch.edgecolor'] = 'none'
 
 
-# In[279]:
+# In[2]:
 
 ### Read data
 data = [pd.read_csv('http://api.qdatum.io/v1/pull/' + str(i) +'?format=tsv', sep='\t') for i in range(1, 17)]
 
 
-# In[280]:
+# In[3]:
 
 time_series = data[1].copy()
 del time_series['pos'] # remove useless columns that prevent duplicates to be identified
@@ -46,7 +46,7 @@ time_series.value = time_series.value.astype(int) # convert values from string t
 time_series = time_series.drop_duplicates() # remove duplicates
 
 
-# In[281]:
+# In[4]:
 
 #Standardize source name
 def normalize_source(source):
@@ -57,13 +57,13 @@ def normalize_source(source):
 time_series.sources = time_series.sources.apply(normalize_source)
 
 
-# In[282]:
+# In[5]:
 
 # temporary, should look into the details
 time_series.sdr_level = time_series.sdr_level.fillna('national')
 
 
-# In[283]:
+# In[15]:
 
 # convert the dataframe to list
 time_series_list = []
@@ -107,14 +107,15 @@ def clean(reported_cases, past_cases):
     return cases
     
 clean_data = []
+time_series_dict2 = {loc: {c: {} for c in ts_clean.category.unique()} for loc in time_series_dict}
 for loc in time_series_dict:
     past_cases = {c: 0 for c in time_series.category.unique()} # initiate at 0
     # for each location, sort the data by date and clean it
     for date in sorted(time_series_dict[loc]):
         c = clean(time_series_dict[loc][date], past_cases)
-        for el in c:
-            if c[el]:
-                clean_data.append(c[el])
+        for k in c:
+            clean_data.append(c[k])
+            time_series_dict2[loc][k][date] = c[k]
         for k in c: past_cases[k] = c[k]['value']
                 
 ts_clean = pd.DataFrame(clean_data)
@@ -122,7 +123,33 @@ print len(time_series.index), len(ts_clean.index)
 ts_clean.head()
 
 
-# In[285]:
+# In[27]:
+
+# interpolate missing data
+first_day = ts_clean.date.min() - 1
+interpolated_data = []
+for loc in time_series_dict2:
+    for c in time_series_dict2[loc]:
+        last_day, last_value = first_day, 0
+        for d in sorted(time_series_dict2[loc][c]):
+            new_value = time_series_dict2[loc][c][d]['value']
+            for i in range(last_day + 1, d):
+                v = int(last_value + (new_value - last_value) * (i - last_day) * 1.0 / (d - last_day))
+                el = time_series_dict2[loc][c][d].copy()
+                el['value'] = v
+                el['type'] = 'interpolate'
+                el['date'] = i
+                interpolated_data.append(el)
+            time_series_dict2[loc][c][d]['type'] = 'original'
+            interpolated_data.append(time_series_dict2[loc][c][d])
+            last_day, last_value = d, new_value
+
+ts_interpolated = pd.DataFrame(interpolated_data)
+print len(time_series.index), len(ts_interpolated.index)
+ts_interpolated.head()
+
+
+# In[ ]:
 
 
 
