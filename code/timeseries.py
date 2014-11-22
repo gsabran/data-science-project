@@ -32,7 +32,6 @@ rcParams['patch.edgecolor'] = 'none'
 
 # In[2]:
 
-### Read data
 data = [pd.read_csv('http://api.qdatum.io/v1/pull/' + str(i) +'?format=tsv', sep='\t') for i in range(1, 17)]
 
 
@@ -63,9 +62,8 @@ time_series.sources = time_series.sources.apply(normalize_source)
 time_series.sdr_level = time_series.sdr_level.fillna('national')
 
 
-# In[15]:
+# In[7]:
 
-# convert the dataframe to list
 time_series_list = []
 _d = time_series.to_dict()
 for i in time_series.index:
@@ -107,7 +105,7 @@ def clean(reported_cases, past_cases):
     return cases
     
 clean_data = []
-time_series_dict2 = {loc: {c: {} for c in ts_clean.category.unique()} for loc in time_series_dict}
+time_series_dict2 = {loc: {c: {} for c in time_series.category.unique()} for loc in time_series_dict}
 for loc in time_series_dict:
     past_cases = {c: 0 for c in time_series.category.unique()} # initiate at 0
     # for each location, sort the data by date and clean it
@@ -123,7 +121,7 @@ print len(time_series.index), len(ts_clean.index)
 ts_clean.head()
 
 
-# In[27]:
+# In[8]:
 
 # interpolate missing data
 first_day = ts_clean.date.min() - 1
@@ -147,6 +145,31 @@ for loc in time_series_dict2:
 ts_interpolated = pd.DataFrame(interpolated_data)
 print len(time_series.index), len(ts_interpolated.index)
 ts_interpolated.head()
+
+
+# In[38]:
+
+# look at data repartition
+ts_interpolated[ts_interpolated.type == 'original'].groupby(['country_code', 'sdr_id']).count()
+
+
+# In[39]:
+
+df = ts_interpolated[(ts_interpolated.country_code == 'LR') & (ts_interpolated.sdr_id == 5513)]
+df[df.type == 'original'].groupby('category').count()
+
+
+# In[40]:
+
+def plot(country_code, sdr_id):
+    df = ts_interpolated[(ts_interpolated.country_code == country_code) & (ts_interpolated.sdr_id == sdr_id)]
+    for c in df.category.unique():
+        _df = df[(df.category == c) & (df.type == 'original')]
+        plt.plot(_df.date, _df.value, label=c)
+    plt.legend(loc=2)
+    plt.show()
+plot('LR', 5513)
+    
 
 
 # In[ ]:
