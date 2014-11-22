@@ -1,11 +1,13 @@
 
 # coding: utf-8
 
-# In[57]:
+# In[1]:
 
 import pandas as pd # pandas
 import numpy as np
 import matplotlib.pyplot as plt # module for plotting
+from numpy.linalg import inv
+import statsmodels.api as sm
 get_ipython().magic(u'matplotlib inline')
 
 #nice defaults for matplotlib
@@ -30,12 +32,12 @@ rcParams['font.size'] = 14
 rcParams['patch.edgecolor'] = 'none'
 
 
-# In[58]:
+# In[2]:
 
 data = [pd.read_csv('http://api.qdatum.io/v1/pull/' + str(i) +'?format=tsv', sep='\t') for i in range(1, 17)]
 
 
-# In[59]:
+# In[3]:
 
 time_series = data[1].copy()
 del time_series['pos'] # remove useless columns that prevent duplicates to be identified
@@ -45,7 +47,7 @@ time_series.value = time_series.value.astype(int) # convert values from string t
 time_series = time_series.drop_duplicates() # remove duplicates
 
 
-# In[60]:
+# In[4]:
 
 #Standardize source name
 def normalize_source(source):
@@ -56,7 +58,7 @@ def normalize_source(source):
 time_series.sources = time_series.sources.apply(normalize_source)
 
 
-# In[61]:
+# In[5]:
 
 # show the different sources for Guinea
 def plot_raw(country_code, sdr_id):
@@ -73,13 +75,13 @@ def plot_raw(country_code, sdr_id):
 plot_raw('GN', 0)
 
 
-# In[62]:
+# In[6]:
 
 # temporary, should look into the details
 time_series.sdr_level = time_series.sdr_level.fillna('national')
 
 
-# In[63]:
+# In[7]:
 
 time_series_list = []
 _d = time_series.to_dict()
@@ -138,13 +140,13 @@ print len(time_series.index), len(ts_clean.index)
 ts_clean.head()
 
 
-# In[64]:
+# In[8]:
 
 df = ts_clean[(ts_clean.date <41920) & (ts_clean.date >41900) & (ts_clean.country_code == 'GN') & (ts_clean.sdr_id == 0) & (ts_clean.category == 'Cases')]
 df.head()
 
 
-# In[65]:
+# In[9]:
 
 # interpolate missing data
 first_day = ts_clean.date.min() - 1
@@ -209,19 +211,19 @@ print len(time_series.index), len(ts_interpolated.index)
 ts_interpolated.head()
 
 
-# In[66]:
+# In[10]:
 
 # look at data repartition
 ts_interpolated[ts_interpolated.type == 'original'].groupby(['country_code', 'sdr_id']).count().head()
 
 
-# In[67]:
+# In[11]:
 
 df = ts_interpolated[(ts_interpolated.country_code == 'LR') & (ts_interpolated.sdr_id == 5513)]
 df[df.type == 'original'].groupby('category').count()
 
 
-# In[68]:
+# In[12]:
 
 def plot(country_code, sdr_id):
     df = ts_interpolated[(ts_interpolated.country_code == country_code) & (ts_interpolated.sdr_id == sdr_id)]
@@ -230,12 +232,113 @@ def plot(country_code, sdr_id):
         plt.plot(_df.date, _df.value, label=c)
         
     plt.legend(loc=2)
-    plt.show()
 #plt.xlim(41860, 41920)
 plot('GN', 0)
+plt.show()
 
 
-# In[68]:
+# In[40]:
+
+a = None
+def get_first(df, k):
+    # return first value in column k
+    return df.to_dict()[k].popitem()[1]
+
+def to_X_Y(country_code, sdr_id):
+    df = ts_interpolated[(ts_interpolated.country_code == country_code) & (ts_interpolated.sdr_id == sdr_id)]
+    X, Y, dates = [], [], []
+    for d in df.date.unique():
+        _df = df[df.date == d]
+        infected = _df[_df.category == 'Cases']
+        if get_first(infected, 'ebola_already_reported'):
+            recent_deaths = _df[_df.category == 'Recent Deaths']
+            deaths = _df[_df.category == 'Deaths']
+            I = get_first(infected, 'value')
+            D_recent = get_first(recent_deaths, 'value')
+            
+            y = get_first(infected, 'delta')
+            x = [I, -I, D_recent]
+            X.append(x)
+            Y.append([y])
+            
+            y = get_first(deaths, 'delta')
+            x = [0, -I, 0]
+            X.append(x)
+            Y.append([y])
+            dates.append(d)
+    return np.array(X), np.array(Y), dates
+
+def fit_data(country_code, sdr_id, days_after):
+    # convert the data to matrix
+    X, Y, dates = to_X_Y(country_code, sdr_id)
+    # remove the beginning of the epidemy
+    X_truncated = X[days_after * 2:, :]
+    Y_truncated = Y[days_after * 2:, :]
+    print X_truncated.shape, Y_truncated.shape
+    # fit the OLS
+    model = sm.OLS(Y_truncated, X_truncated)
+    results = model.fit()
+    # print the OLS stats
+    print(results.summary())
+    # build the fitted times series
+    fit = X_truncated.dot(results.params)
+    cum_y, cum_d_recent = [], []
+    y, d_recent = sum(Y[:days_after * 2:2]), sum(Y[1:days_after * 2 + 1:2])
+    if type(y) != int:
+        y, d_recent = y[0], d_recent[0]
+    for idx, v in enumerate(fit):
+        if idx % 2 == 0:
+            y += v
+            cum_y.append(y)
+        else:
+            d_recent += v
+            cum_d_recent.append(d_recent)
+            
+    return cum_y, cum_d_recent, dates[days_after:]
+
+def plot_fit(country_code, sdr_id, days_after=0):
+    plot(country_code, sdr_id)
+    Y_hat, D_hat, dates = fit_data(country_code, sdr_id, days_after)
+    plt.plot(dates, Y_hat, label='Cases fit')
+    plt.plot(dates, D_hat, label='Deaths fit')
+    
+    plt.legend(loc=2)
+
+
+# In[39]:
+
+country_code, sdr_id = 'GN', 0
+plot_fit(country_code, sdr_id, 0)
+plt.show()
+plot_fit(country_code, sdr_id, 10)
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
+
+
+
+
+# In[ ]:
 
 
 
