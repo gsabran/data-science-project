@@ -19,13 +19,11 @@ Type: Prediction. Could predict “happiness” in relationships, or breakups (c
 Link: http://www.icpsr.umich.edu/icpsrweb/ICPSR/studies/30103?q=&paging.rows=25&sortBy=10
 Comments: Could be very interesting, not that difficult, data is manageable, 4000 respondents 450 variables.
 
-
 Topic: Crime
 Source: US State Study
 Type: Prediction. Could predict crime from drug abuse or mental illness.
 Link: http://www.icpsr.umich.edu/icpsrweb/ICPSR/studies/27521?q=&paging.rows=25&sortBy=10
 Comments: Missing data could be a problem. Medium difficulty, data is large but not huge, 67,760 units, 2,500 variables.
-
 
 Topic: Wikipedia searches
 Source: Wikipedia
