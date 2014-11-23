@@ -37,7 +37,7 @@ rcParams['patch.edgecolor'] = 'none'
 
 # Load the data from qdatum.io and the cleaned covariates table
 
-# In[2]:
+# In[4]:
 
 data = [pd.read_csv('http://api.qdatum.io/v1/pull/' + str(i) +'?format=tsv', sep='\t') for i in range(1, 17)]
 covariates = pd.read_csv('../data/merged_covariate_df.csv')
@@ -45,21 +45,21 @@ covariates = pd.read_csv('../data/merged_covariate_df.csv')
 
 # For each location, the covariate table contains information that might be relevant to Ebola prediction (some data is missing)
 
-# In[77]:
+# In[5]:
 
 covariates.head()
 
 
 # Here are the covariate we have access to:
 
-# In[78]:
+# In[6]:
 
 for c in covariates.columns: print c
 
 
 # The time serie table contains information on Ebola cases for different location. Relevant information is location, date, cases number, and case status. Most of the categories (cases, deaths...) are cumulatives. New cases category is not
 
-# In[79]:
+# In[7]:
 
 time_series = data[1].copy()
 time_series.head()
@@ -67,7 +67,7 @@ time_series.head()
 
 # Remove useless values from the time series
 
-# In[80]:
+# In[8]:
 
 del time_series['pos'] # remove useless columns that prevent duplicates to be identified
 del time_series['link']
@@ -76,7 +76,7 @@ time_series.value = time_series.value.astype(int) # convert values from string t
 time_series = time_series.drop_duplicates() # remove duplicates
 
 
-# In[81]:
+# In[9]:
 
 #Standardize source name
 def normalize_source(source):
@@ -90,7 +90,7 @@ time_series.sdr_level = time_series.sdr_level.fillna('national')
 
 # Data comes from different sources that might overlap. We will have to select one of them in case of conflict. Some values make no sense and will be removed
 
-# In[82]:
+# In[10]:
 
 # show the different sources for Guinea
 def plot_raw(country_code, sdr_id):
@@ -111,7 +111,7 @@ plot_raw('GN', 0)
 
 # Select sources and remove decreasing data for cumulative categories. For this we will use a dictionary instead of a dataframe to have more flexibility.
 
-# In[83]:
+# In[11]:
 
 # transform the dataframe to a list
 time_series_list = []
@@ -174,7 +174,7 @@ ts_clean.head()
 
 # **We do linear interpolation when the data is missing for some days:**
 
-# In[84]:
+# In[12]:
 
 # interpolate missing data
 first_day = ts_clean.date.min() - 1
@@ -224,7 +224,7 @@ ts_interpolated.head()
 
 # **Dead bodies are an important source of contamination for Ebola. We add a variable that keeps track of the number of recent deaths.**
 
-# In[85]:
+# In[13]:
 
 # add recent deaths
 def add_recent_deaths(interpolated_data, time_series_dict, time_window=5):
@@ -255,7 +255,7 @@ ts_interpolated[ts_interpolated.category == 'Recent Deaths'].head()
 
 # A helper function to get values from different dataframes:
 
-# In[86]:
+# In[14]:
 
 # function to get easily values from different dataframes
 def get(country_code, sdr_id=0, attribute='Cases', date=None, delta=False):
@@ -291,7 +291,7 @@ print 'Ebola already reported in Guinea on 2014-10-10:', get('GN', sdr_id=0, att
 
 # **Display the time series for a given location:**
 
-# In[87]:
+# In[15]:
 
 def plot(country_code, sdr_id, categories=ts_interpolated.category.unique(), delta=False):
     df = ts_interpolated[(ts_interpolated.country_code == country_code) & (ts_interpolated.sdr_id == sdr_id)]
@@ -332,7 +332,7 @@ plt.show()
 
 # ***Create the model and target matrixes:***
 
-# In[88]:
+# In[16]:
 
 def get_first(df, k):
     # return first value in column k
@@ -375,7 +375,7 @@ def to_X_Y(country_code, sdr_id, train_limit):
 # 
 # - reconstruct the cumulatives variables $I$ and $D$
 
-# In[89]:
+# In[17]:
 
 def fit_data(country_code, sdr_id, train_limit, test_limit, days_after, should_print_table):
     """
@@ -454,7 +454,7 @@ def fit_data(country_code, sdr_id, train_limit, test_limit, days_after, should_p
 
 # ***Display the original and fitted values***
 
-# In[90]:
+# In[18]:
 
 def plot_fit(country_code, sdr_id, train_limit='2014-10-01', test_limit='2014-12-01', days_after=0, should_print_table=False, plot_variations=False):
     fit = fit_data(country_code, sdr_id, train_limit, test_limit, days_after, should_print_table)
@@ -482,26 +482,27 @@ def plot_training_limit(limit):
     plt.plot([limit, limit], [0, 1e50], color='r', label='training limit')
     plt.axis(ax)
     
-country_code, sdr_id = 'GN', 0
-plot_fit(country_code, sdr_id, days_after=20)
+    
+country_code, sdr_id = 'GN', 2
+plot_fit(country_code, sdr_id, days_after=30)
 
 
 # The vertical red line mark the end of the training period. A first observation is that the simple SIR model gives a very good fit for a disease that involve complexe mechanisms.
 # 
 # It is surprising to see the fit much higher than the target (for the number of cases) over almost all the training period. Here is the explanation: the target is not the cumulative number of case, but its variation. In the plot below, we see that the fit of the variation has not such surprising behaviour.
 
-# In[91]:
+# In[19]:
 
 plot_fit(country_code, sdr_id, days_after=20, plot_variations=True)
 
 
-# The problem here is that the variations have high variability while the cumulative numbers are quite smooth. For instance a variation of 9 cases over one day fitted at a value of 2 yield a square lost of 49 while three successives variations of 3 fitted at a value of 2 yield a lost of 3. This push the fitted variations up. However, the reality they represent is very close and we don't want such behaviour.
+# The problem here is that the variations have high variability while the cumulative numbers are quite smooth. For instance a variation of 12 cases over one day fitted at a value of 2 yield a square lost of 100 while four successives variations of 3 fitted at a value of 2 yield a lost of 4. This push the fitted variations up. However, the reality they represent is very close and we don't want such behaviour.
 # 
 # For this reason, we decided to smooth the variations
 
 # **Smooth variations**
 
-# In[92]:
+# In[20]:
 
 # smooth the delta
 interpolated_data = []
@@ -528,14 +529,14 @@ ts_interpolated = pd.DataFrame(interpolated_data)
 
 # We now get a better approximation:
 
-# In[93]:
+# In[21]:
 
 plot_fit(country_code, sdr_id, days_after=20)
 
 
 # because the variations are better fitted:
 
-# In[94]:
+# In[22]:
 
 plot_fit(country_code, sdr_id, days_after=20, plot_variations=True)
 
