@@ -244,7 +244,7 @@ plot('GN', 0)
 plt.show()
 
 
-# In[321]:
+# In[425]:
 
 a = None
 def get_first(df, k):
@@ -262,10 +262,11 @@ def to_X_Y(country_code, sdr_id):
             recent_deaths = _df[_df.category == 'Recent Deaths']
             deaths = _df[_df.category == 'Deaths']
             I = get_first(infected, 'value')
+            #print d
             D_recent = get_first(recent_deaths, 'value')
             
             y = get_first(infected, 'delta')
-            x = [I, -I, D_recent]
+            x = [I, -I, 0]
             X.append(x)
             Y.append([y])
             
@@ -276,7 +277,7 @@ def to_X_Y(country_code, sdr_id):
             dates.append(d)
     return np.array(X), np.array(Y), dates
 
-def fit_data(country_code, sdr_id, train_limit, days_after):
+def fit_data(country_code, sdr_id, train_limit, days_after, should_print_table):
     train_limit = (dt.datetime.strptime(train_limit, '%Y-%m-%d') - dt.datetime(1899, 12, 30)).days
     print 'train_limit', train_limit
     # convert the data to matrix
@@ -287,12 +288,13 @@ def fit_data(country_code, sdr_id, train_limit, days_after):
     Y_truncated = Y[days_after * 2:, :]
     # remove the non training data
     X_truncated_train = X_truncated[:(train_limit_range - days_after) * 2, :]
+    if X_truncated_train.shape[0] == 0: return None # not any data to fit
     Y_truncated_train = Y_truncated[:(train_limit_range - days_after) * 2, :]
     # fit the OLS
     model = sm.OLS(Y_truncated_train, X_truncated_train)
     results = model.fit()
     # print the OLS stats
-    print(results.summary())
+    if should_print_table: print(results.summary())
     
     # build the fitted times series step by step
     # get the last known data
@@ -315,7 +317,7 @@ def fit_data(country_code, sdr_id, train_limit, days_after):
         recent_deaths = recent_deaths[1:]
         recent_deaths.append(delta_D)
         last_data_known = last_data_known + np.array([[delta_I, -delta_I, 0], [0, delta_I, 0]])
-        last_data_known[1, 2] = sum(recent_deaths)
+        #last_data_known[1, 2] = sum(recent_deaths)
     
     cum_y, cum_d_recent = [], []
     y, d_recent = sum(Y[:days_after * 2:2]), sum(Y[1:days_after * 2 + 1:2])
@@ -331,14 +333,16 @@ def fit_data(country_code, sdr_id, train_limit, days_after):
             
     return cum_y, cum_d_recent, dates[days_after:]
 
-def plot_fit(country_code, sdr_id, train_limit='2014-10-01', days_after=0):
-    plot(country_code, sdr_id, ['Cases', 'Deaths'])
-    Y_hat, D_hat, dates = fit_data(country_code, sdr_id, train_limit, days_after)
+def plot_fit(country_code, sdr_id, train_limit='2014-10-01', days_after=0, should_print_table=False):
+    fit = fit_data(country_code, sdr_id, train_limit, days_after, should_print_table)
+    if fit is None: return
+    Y_hat, D_hat, dates = fit
     plt.plot(dates, Y_hat, label='Cases fit')
     plt.plot(dates, D_hat, label='Deaths fit')
     
     # plot trianing limit
     train_limit = (dt.datetime.strptime(train_limit, '%Y-%m-%d') - dt.datetime(1899, 12, 30)).days
+    plot(country_code, sdr_id, ['Cases', 'Deaths'])
     ax = plt.axis()
     plt.plot([train_limit, train_limit], [0, 1e50], color='r', label='training limit')
     plt.axis(ax)
@@ -346,38 +350,88 @@ def plot_fit(country_code, sdr_id, train_limit='2014-10-01', days_after=0):
     plt.legend(loc=2)
 
 
-# In[322]:
+# In[426]:
 
 country_code, sdr_id = 'GN', 0
 #plot_fit(country_code, sdr_id, train_limit='2014-09-01', days_after=0)
 #plt.show()
-plot_fit(country_code, sdr_id, train_limit='2014-09-01', days_after=10)
+plot_fit(country_code, sdr_id, train_limit='2014-09-01', days_after=10, should_print_table=True)
 
 
-# In[323]:
+# In[408]:
 
 country_code, sdr_id = 'SL', 0
-plot_fit(country_code, sdr_id, train_limit='2014-10-01', days_after=0)
-plt.xlim(41700, 41930)
-plt.ylim(0, 8000)
+plot_fit(country_code, sdr_id, train_limit='2014-10-01', days_after=40, should_print_table=True)
 
 
-# In[324]:
+# In[409]:
 
 plot('SL', 0)
 
 
-# In[174]:
+# In[410]:
+
+selected_regions = pd.read_csv('Selected_SDR.csv', index_col =0)
+selected_regions.head()
+
+
+# In[411]:
+
+GN = pd.read_csv('Guinea_artificial.csv', index_col =0)
+GN.head()
+
+
+# In[429]:
+
+covariates = pd.read_csv('../data/merged_covariate_df.csv', index_col =0)
+covariates.head(100)
+
+
+# In[412]:
+
+country_code, sdr_id = 'SL', 8624 
+df = ts_interpolated[(ts_interpolated.country_code == country_code) & (ts_interpolated.sdr_id == sdr_id)]
+_df = df[df.date == 41934]
+recent_deaths = _df[_df.category == 'Recent Deaths']
+df[(df.category == 'Recent Deaths') & (df.date > 41930)].head(100)
+
+
+# In[424]:
+
+for el in selected_regions.as_matrix():
+    try:
+        country_code, sdr_id = el
+        if country_code != 'GN':
+            print country_code, sdr_id
+            df = ts_interpolated[(ts_interpolated.country_code == country_code) & (ts_interpolated.sdr_id == sdr_id) & (ts_interpolated.category == 'Cases')]
+            days_after = len(df.index) - len(df[df.value > 15].index)
+            print days_after
+            plot_fit(country_code, sdr_id, train_limit='2014-09-01', days_after=days_after)
+            plt.show()
+    except KeyError:
+        print 'ERROR for', country_code, sdr_id
+
+
+# In[430]:
+
+def get(country_code, sdr_id, attribute, date=None):
+    df = ts_interpolated
+    if attribtue not in ts_interpolated.columns: df = covariates
+    df = df[(df.country_code == country_code) & (df.sdr_id == sdr_id)]
+    # to be finished
+
+
+# In[ ]:
 
 
 
 
-# In[114]:
+# In[ ]:
 
 
 
 
-# In[114]:
+# In[ ]:
 
 
 
