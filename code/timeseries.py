@@ -1,11 +1,14 @@
 
 # coding: utf-8
 
-# In[1]:
+# In[101]:
 
 import pandas as pd # pandas
 import numpy as np
 import matplotlib.pyplot as plt # module for plotting
+from numpy.linalg import inv
+import statsmodels.api as sm
+import datetime as dt
 get_ipython().magic(u'matplotlib inline')
 
 #nice defaults for matplotlib
@@ -30,12 +33,12 @@ rcParams['font.size'] = 14
 rcParams['patch.edgecolor'] = 'none'
 
 
-# In[2]:
+# In[102]:
 
 data = [pd.read_csv('http://api.qdatum.io/v1/pull/' + str(i) +'?format=tsv', sep='\t') for i in range(1, 17)]
 
 
-# In[3]:
+# In[103]:
 
 time_series = data[1].copy()
 del time_series['pos'] # remove useless columns that prevent duplicates to be identified
@@ -45,7 +48,7 @@ time_series.value = time_series.value.astype(int) # convert values from string t
 time_series = time_series.drop_duplicates() # remove duplicates
 
 
-# In[4]:
+# In[104]:
 
 #Standardize source name
 def normalize_source(source):
@@ -56,13 +59,30 @@ def normalize_source(source):
 time_series.sources = time_series.sources.apply(normalize_source)
 
 
-# In[5]:
+# In[105]:
+
+# show the different sources for Guinea
+def plot_raw(country_code, sdr_id):
+    df = time_series[(time_series.country_code == country_code) & (time_series.sdr_id == sdr_id) & (time_series.category == 'Cases')]
+    markers = ['x', 's', 'o', 'o', 'o', 'o', 'o', 'o', 'o', 'o']
+    colors = ['b', 'r', 'g']
+    for idx, s in enumerate(df.sources.unique()):
+        _df = df[(df.sources == s)]
+        plt.scatter(_df.date, _df.value, label=s, marker = markers[idx], color = colors[idx])
+        
+    plt.legend(loc=2)
+    plt.show()
+#plt.xlim(41860, 41920)
+plot_raw('GN', 0)
+
+
+# In[106]:
 
 # temporary, should look into the details
 time_series.sdr_level = time_series.sdr_level.fillna('national')
 
 
-# In[7]:
+# In[178]:
 
 time_series_list = []
 _d = time_series.to_dict()
@@ -114,6 +134,9 @@ for loc in time_series_dict:
         for k in c:
             clean_data.append(c[k])
             time_series_dict2[loc][k][date] = c[k]
+            # TODO remove this line
+            #if date > 41883: time_series_dict2[loc][k][date]['value'] = 0
+            #if date > 41883: time_series_dict2[loc][k][date]['delta'] = 0
         for k in c: past_cases[k] = c[k]['value']
                 
 ts_clean = pd.DataFrame(clean_data)
@@ -121,57 +144,222 @@ print len(time_series.index), len(ts_clean.index)
 ts_clean.head()
 
 
-# In[50]:
+# In[179]:
+
+df = ts_clean[(ts_clean.date <41920) & (ts_clean.date >41900) & (ts_clean.country_code == 'GN') & (ts_clean.sdr_id == 0) & (ts_clean.category == 'Cases')]
+df.head()
+
+
+# In[180]:
 
 # interpolate missing data
 first_day = ts_clean.date.min() - 1
 interpolated_data = []
+
+# find day ebola is reported for the first time
+ebola_start_days = {}
+for loc in time_series_dict2:
+    start_day = 10000000
+    for c in time_series_dict2[loc]:
+        if len(time_series_dict2[loc][c]):
+            start_day = min(start_day, sorted(time_series_dict2[loc][c])[0])
+    ebola_start_days[loc] = start_day
+        
+# interpolate the data
 for loc in time_series_dict2:
     for c in time_series_dict2[loc]:
-        last_day, last_value, ebola_started = first_day, 0, False
+        last_day, last_value, yesterday_value = first_day, 0, 0
         for d in sorted(time_series_dict2[loc][c]):
             new_value = time_series_dict2[loc][c][d]['value']
             for i in range(last_day + 1, d):
+                ebola_started = ebola_start_days[loc] <= i
                 v = 0
                 if ebola_started:  v = int(last_value + (new_value - last_value) * (i - last_day) * 1.0 / (d - last_day))
                 el = time_series_dict2[loc][c][d].copy()
                 el['value'] = v
                 el['type'] = 'interpolate'
                 el['date'] = i
+                el['ebola_already_reported'] = ebola_started
+                el['delta'] = v - yesterday_value
+                yesterday_value = v
                 interpolated_data.append(el)
-            ebola_started = True
+                time_series_dict2[loc][c][i] = el
+            ebola_started = ebola_start_days[loc] <= d
             time_series_dict2[loc][c][d]['type'] = 'original'
+            time_series_dict2[loc][c][d]['ebola_already_reported'] = ebola_started
+            time_series_dict2[loc][c][d]['delta'] = new_value - yesterday_value
+            yesterday_value = new_value
             interpolated_data.append(time_series_dict2[loc][c][d])
             last_day, last_value = d, new_value
+            
+# add recent deaths
+recent = 10 # 10 days
+for loc in time_series_dict2:
+    c = 'Deaths'
+    recent_deaths = []
+    for d in sorted(time_series_dict2[loc][c]):
+        el = time_series_dict2[loc][c][d].copy()
+        removed = 0
+        if len(recent_deaths) == recent: removed = recent_deaths[recent - 1]
+        recent_deaths = recent_deaths[:recent - 1]
+        recent_deaths.append(el['delta'])
+        el['category'] = 'Recent Deaths'
+        el['value'] = sum(recent_deaths)
+        el['delta'] = el['delta'] - removed
+        el['type'] = 'interpolate'
+        # TODO remove this line
+        #if d > 41883: el['value'] = 0
+        #if d > 41883: el['delta'] = 0
+        interpolated_data.append(el)
+
 
 ts_interpolated = pd.DataFrame(interpolated_data)
 print len(time_series.index), len(ts_interpolated.index)
 ts_interpolated.head()
 
 
-# In[51]:
+# In[181]:
 
 # look at data repartition
-ts_interpolated[ts_interpolated.type == 'original'].groupby(['country_code', 'sdr_id']).count()
+ts_interpolated[ts_interpolated.type == 'original'].groupby(['country_code', 'sdr_id']).count().head()
 
 
-# In[52]:
+# In[182]:
 
 df = ts_interpolated[(ts_interpolated.country_code == 'LR') & (ts_interpolated.sdr_id == 5513)]
 df[df.type == 'original'].groupby('category').count()
 
 
-# In[53]:
+# In[183]:
 
-def plot(country_code, sdr_id):
+def plot(country_code, sdr_id, categories=ts_interpolated.category.unique()):
     df = ts_interpolated[(ts_interpolated.country_code == country_code) & (ts_interpolated.sdr_id == sdr_id)]
-    for c in df.category.unique():
+    for c in categories:
         _df = df[(df.category == c)]
         plt.plot(_df.date, _df.value, label=c)
+        
     plt.legend(loc=2)
-    plt.show()
-plot('LR', 5513)
+#plt.xlim(41860, 41920)
+plot('GN', 0)
+plt.show()
+
+
+# In[186]:
+
+a = None
+def get_first(df, k):
+    # return first value in column k
+    return df.to_dict()[k].popitem()[1]
+
+def to_X_Y(country_code, sdr_id):
+    df = ts_interpolated[(ts_interpolated.country_code == country_code) & (ts_interpolated.sdr_id == sdr_id)]
+    X, Y, dates = [], [], []
+    for d in df.date.unique():
+        _df = df[df.date == d]
+        infected = _df[_df.category == 'Cases']
+        if get_first(infected, 'ebola_already_reported'):
+            recent_deaths = _df[_df.category == 'Recent Deaths']
+            deaths = _df[_df.category == 'Deaths']
+            I = get_first(infected, 'value')
+            D_recent = get_first(recent_deaths, 'value')
+            
+            y = get_first(infected, 'delta')
+            x = [I, -I, D_recent]
+            X.append(x)
+            Y.append([y])
+            
+            y = get_first(deaths, 'delta')
+            x = [0, -I, 0]
+            X.append(x)
+            Y.append([y])
+            dates.append(d)
+    return np.array(X), np.array(Y), dates
+
+def fit_data(country_code, sdr_id, train_limit, days_after):
+    train_limit = (dt.datetime.strptime(train_limit, '%Y-%m-%d') - dt.datetime(1899, 12, 30)).days
+    print train_limit
+    # convert the data to matrix
+    X, Y, dates = to_X_Y(country_code, sdr_id)
+    train_limit -= dates[0]
+    # remove the beginning of the epidemy
+    X_truncated = X[days_after * 2:, :]
+    Y_truncated = Y[days_after * 2:, :]
+    # remove the non training data
+    X_truncated_train = X_truncated[:(train_limit - days_after) * 2, :]
+    Y_truncated_train = Y_truncated[:(train_limit - days_after) * 2, :]
+    # fit the OLS
+    model = sm.OLS(Y_truncated_train, X_truncated_train)
+    results = model.fit()
+    # print the OLS stats
+    print(results.summary())
+    # build the fitted times series
+    fit = X_truncated_train.dot(results.params)
+    last_data_known = X_truncated_train[-2:, :]
+    for i in range(train_limit, len(Y) / 2):
+        data_interpolated = last_data_known.dot(results.params)
+        fit = np.append(fit, data_interpolated)
+        delta_I = data_interpolated[0]
+        delta_D = data_interpolated[1]
+        last_data_known = last_data_known + np.array([delta_I, -delta_I, delta_D])
+#    fit = X_truncated.dot(results.params)
     
+    
+    cum_y, cum_d_recent = [], []
+    y, d_recent = sum(Y[:days_after * 2:2]), sum(Y[1:days_after * 2 + 1:2])
+    if type(y) != int:
+        y, d_recent = y[0], d_recent[0]
+    for idx, v in enumerate(fit):
+        if idx % 2 == 0:
+            y += v
+            cum_y.append(y)
+        else:
+            d_recent += v
+            cum_d_recent.append(d_recent)
+            
+    return cum_y, cum_d_recent, dates[days_after:]
+
+def plot_fit(country_code, sdr_id, train_limit='2014-10-01', days_after=0):
+    plot(country_code, sdr_id, ['Cases', 'Deaths'])
+    Y_hat, D_hat, dates = fit_data(country_code, sdr_id, train_limit, days_after)
+    print len(dates), len(Y_hat)
+    plt.plot(dates, Y_hat, label='Cases fit')
+    plt.plot(dates, D_hat, label='Deaths fit')
+    
+    # plot trianing limit
+    train_limit = (dt.datetime.strptime(train_limit, '%Y-%m-%d') - dt.datetime(1899, 12, 30)).days
+    ax = plt.axis()
+    plt.plot([train_limit, train_limit], [0, 100000], color='r', label='training limit')
+    plt.axis(ax)
+    
+    plt.legend(loc=2)
+
+
+# In[187]:
+
+country_code, sdr_id = 'GN', 0
+plot_fit(country_code, sdr_id, train_limit='2014-09-01', days_after=0)
+plt.show()
+plot_fit(country_code, sdr_id, train_limit='2014-09-01', days_after=10)
+
+
+# In[174]:
+
+
+
+
+# In[174]:
+
+
+
+
+# In[114]:
+
+
+
+
+# In[114]:
+
+
 
 
 # In[ ]:
