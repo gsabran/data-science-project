@@ -264,26 +264,31 @@ plot('GN', 0)
 plt.show()
 
 
-# In[11]:
+# In[116]:
 
 a = None
 def get_first(df, k):
     # return first value in column k
     return df.to_dict()[k].popitem()[1]
 
-def to_X_Y(country_code, sdr_id):
+def to_X_Y(country_code, sdr_id, train_limit):
     """convert data to OLS matrixes"""
     df = ts_interpolated[(ts_interpolated.country_code == country_code) & (ts_interpolated.sdr_id == sdr_id)]
-    X, Y, dates = [], [], []
-    for d in df.date.unique():
+    X, Y, first_day = [], [], None
+    for d in sorted(df.date.unique()):
+        if d > train_limit: break
         _df = df[df.date == d]
         infected = _df[_df.category == 'Cases']
         if get_first(infected, 'ebola_already_reported'):
+            if first_day is None: first_day = d
             recent_deaths = _df[_df.category == 'Recent Deaths']
             deaths = _df[_df.category == 'Deaths']
             I = get_first(infected, 'value')
-            D_recent = get_first(recent_deaths, 'value')
-            
+            try:
+                D_recent = get_first(recent_deaths, 'value')
+            except KeyError:
+                print d
+                raise
             y = get_first(infected, 'delta')
             x = [I, -I, 0]
             X.append(x)
@@ -294,32 +299,29 @@ def to_X_Y(country_code, sdr_id):
             X.append(x)
             Y.append([y])
             
-            dates.append(d)
-    return np.array(X), np.array(Y), dates
+    return np.array(X), np.array(Y), first_day
 
-def fit_data(country_code, sdr_id, train_limit, days_after, should_print_table):
+def fit_data(country_code, sdr_id, train_limit, test_limit, days_after, should_print_table):
     train_limit = (dt.datetime.strptime(train_limit, '%Y-%m-%d') - dt.datetime(1899, 12, 30)).days
+    test_limit = (dt.datetime.strptime(test_limit, '%Y-%m-%d') - dt.datetime(1899, 12, 30)).days
     print 'train_limit', train_limit
     # convert the data to matrix
-    X, Y, dates = to_X_Y(country_code, sdr_id)
-    train_limit_range = train_limit - dates[0]
+    X, Y, first_day = to_X_Y(country_code, sdr_id, train_limit)
     # remove the beginning of the epidemy
-    X_truncated = X[days_after * 2:, :]
-    Y_truncated = Y[days_after * 2:, :]
+    X_train = X[days_after * 2:, :]
+    Y_train = Y[days_after * 2:, :]
     # remove the non training data
-    X_truncated_train = X_truncated[:(train_limit_range - days_after) * 2, :]
-    if X_truncated_train.shape[0] == 0: return None # not any data to fit
-    Y_truncated_train = Y_truncated[:(train_limit_range - days_after) * 2, :]
+    if X_train.shape[0] == 0: return None # not any data to fit
     # fit the OLS
-    model = sm.OLS(Y_truncated_train, X_truncated_train)
+    model = sm.OLS(Y_train, X_train)
     results = model.fit()
     # print the OLS stats
     if should_print_table: print(results.summary())
     
     # build the fitted times series step by step
     # get the last known data
-    fit = X_truncated_train.dot(results.params)
-    last_data_known = X_truncated_train[-2:, :]
+    fit = X_train.dot(results.params)
+    last_data_known = X_train[-2:, :]
     
     recent_deaths = []
     df = ts_interpolated[(ts_interpolated.country_code == country_code) & (ts_interpolated.sdr_id == sdr_id) & (ts_interpolated.category == 'Deaths')]
@@ -329,7 +331,7 @@ def fit_data(country_code, sdr_id, train_limit, days_after, should_print_table):
     
     
     # build the predicted data from the estimated rates and the past estimated data
-    for i in range(train_limit_range, len(Y) / 2):
+    for i in range(test_limit - train_limit):
         data_interpolated = last_data_known.dot(results.params)
         fit = np.append(fit, data_interpolated)
         delta_I = data_interpolated[0]
@@ -350,13 +352,13 @@ def fit_data(country_code, sdr_id, train_limit, days_after, should_print_table):
         else:
             d_recent += v
             cum_death.append(d_recent)
-            
-    return cum_y, cum_death, dates[days_after:]
+    return cum_y, cum_death, range(first_day + days_after, test_limit + 1)
 
-def plot_fit(country_code, sdr_id, train_limit='2014-10-01', days_after=0, should_print_table=False):
-    fit = fit_data(country_code, sdr_id, train_limit, days_after, should_print_table)
+def plot_fit(country_code, sdr_id, train_limit='2014-10-01', test_limit='2014-12-01', days_after=0, should_print_table=False):
+    fit = fit_data(country_code, sdr_id, train_limit, test_limit, days_after, should_print_table)
     if fit is None: return
     Y_hat, D_hat, dates = fit
+    print len(dates), len(Y_hat)
     plt.plot(dates, Y_hat, label='Cases fit')
     plt.plot(dates, D_hat, label='Deaths fit')
     
@@ -370,10 +372,9 @@ def plot_fit(country_code, sdr_id, train_limit='2014-10-01', days_after=0, shoul
     plt.legend(loc=2)
 
 
-# In[54]:
+# In[123]:
 
-country_code, sdr_id = 'GN', 0
-plot_fit(country_code, sdr_id, train_limit='2014-10-01', days_after=10, should_print_table=True)
+plot_fit('GN', 0, days_after=10)
 
 
 # In[55]:
