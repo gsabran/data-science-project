@@ -37,7 +37,7 @@ rcParams['patch.edgecolor'] = 'none'
 
 # Load the data from qdatum.io and the cleaned covariates table
 
-# In[4]:
+# In[2]:
 
 data = [pd.read_csv('http://api.qdatum.io/v1/pull/' + str(i) +'?format=tsv', sep='\t') for i in range(1, 17)]
 covariates = pd.read_csv('../data/merged_covariate_df.csv')
@@ -45,21 +45,21 @@ covariates = pd.read_csv('../data/merged_covariate_df.csv')
 
 # For each location, the covariate table contains information that might be relevant to Ebola prediction (some data is missing)
 
-# In[71]:
+# In[3]:
 
 covariates.head()
 
 
 # Here are the covariate we have access to:
 
-# In[72]:
+# In[4]:
 
 for c in covariates.columns: print c
 
 
 # The time serie table contains information on Ebola cases for different location. Relevant information is location, date, cases number, and case status. Most of the categories (cases, deaths...) are cumulatives. New cases category is not
 
-# In[73]:
+# In[5]:
 
 time_series = data[1].copy()
 time_series.head()
@@ -67,7 +67,7 @@ time_series.head()
 
 # Remove useless values from the time series
 
-# In[74]:
+# In[6]:
 
 del time_series['pos'] # remove useless columns that prevent duplicates to be identified
 del time_series['link']
@@ -76,7 +76,7 @@ time_series.value = time_series.value.astype(int) # convert values from string t
 time_series = time_series.drop_duplicates() # remove duplicates
 
 
-# In[75]:
+# In[7]:
 
 #Standardize source name
 def normalize_source(source):
@@ -90,7 +90,7 @@ time_series.sdr_level = time_series.sdr_level.fillna('national')
 
 # Data comes from different sources that might overlap. We will have to select one of them in case of conflict. Some values make no sense and will be removed
 
-# In[76]:
+# In[8]:
 
 # show the different sources for Guinea
 def plot_raw(country_code, sdr_id):
@@ -110,7 +110,7 @@ plot_raw('GN', 0)
 
 # Select sources and remove decreasing data for cumulative categories. For this we will use a dictionary instead of a dataframe to have more flexibility.
 
-# In[77]:
+# In[9]:
 
 # transform the dataframe to a list
 time_series_list = []
@@ -173,7 +173,7 @@ ts_clean.head()
 
 # **We do linear interpolation when the data is missing for some days:**
 
-# In[78]:
+# In[10]:
 
 # interpolate missing data
 first_day = ts_clean.date.min() - 1
@@ -223,7 +223,7 @@ ts_interpolated.head()
 
 # **Dead bodies are an important source of contamination for Ebola. We add a variable that keeps track of the number of recent deaths.**
 
-# In[79]:
+# In[11]:
 
 # add recent deaths
 def add_recent_deaths(interpolated_data, time_series_dict, time_window=5):
@@ -254,32 +254,54 @@ ts_interpolated[ts_interpolated.category == 'Recent Deaths'].head()
 
 # A helper function to get values from different dataframes:
 
-# In[80]:
+# In[12]:
 
 # function to get easily values from different dataframes
-def get(country_code, sdr_id=0, attribute='Cases', date=None, delta=False):
-    try:
-        df = covariates
-        if attribute in covariates.columns:
-            df = df[(df.country_code == country_code) & (df.sdr_id == sdr_id)]
-            return df.to_dict()[attribute].popitem()[1]
-        else:
-            df = ts_interpolated
-            if date is not None:
-                if type(date) != int and type(date) != np.int64:
-                    date = (dt.datetime.strptime(date, '%Y-%m-%d') - dt.datetime(1899, 12, 30)).days
-                df = df[df.date == date]
-            if attribute in df.columns:
-                return df.to_dict()[attribute].popitem()[1] 
+class Getter:
+    def __init__(self):
+        self.country_code = None
+        self.sdr_id = None
+        self.ts = None
+        self.cov = None
+        
+    def get(self, country_code, sdr_id=0, attribute='Cases', date=None, delta=False):
+        # keep last request in memory for faster response
+        if not (country_code == self.country_code and sdr_id == self.sdr_id):
+            self.country_code, self.sdr_id = country_code, sdr_id
+            self.ts = ts_interpolated[(ts_interpolated.country_code == country_code) & (ts_interpolated.sdr_id == sdr_id)]
+            self.cov = covariates[(covariates.country_code == country_code) & (covariates.sdr_id == sdr_id)]
+        try:
+            if attribute in self.cov:
+                return self.cov.to_dict()[attribute].popitem()[1]
             else:
-                if delta: k = 'delta'
-                else: k = 'value'
-                return df.to_dict()[k].popitem()[1]
-    except KeyError:
-        print 'no value for', country_code, 'sdr id:', sdr_id, attribute,
-        if date is not None: print 'date', date
-        print
-        return None
+                df = self.ts
+                if date is not None:
+                    if type(date) != int and type(date) != np.int64:
+                        date = (dt.datetime.strptime(date, '%Y-%m-%d') - dt.datetime(1899, 12, 30)).days
+                    df = self.ts[self.ts.date == date]
+                if attribute in df.columns:
+                    return df.to_dict()[attribute].popitem()[1] 
+                else:
+                    df = df[df.category == attribute]
+                    if delta: k = 'delta'
+                    else: k = 'value'
+                    return df.to_dict()[k].popitem()[1]
+        except KeyError:
+            print 'no value for', country_code, 'sdr id:', sdr_id, attribute,
+            if date is not None: print 'date', date
+            print
+            return None
+        
+    def reset_cache(self):
+        # reset memory
+        self.country_code = None
+        self.sdr_id = None
+        self.ts = None
+        self.cov = None
+    
+g = Getter()
+def get(country_code, sdr_id=0, attribute='Cases', date=None, delta=False):
+    return g.get(country_code, sdr_id, attribute, date, delta)
     
 print 'area_sq_km:', get('GN', sdr_id=1, attribute='area_sq_km')
 print 'Cases for Guinea on 2014-10-10:', get('GN', sdr_id=0, attribute='Cases', date='2014-10-10')
@@ -290,7 +312,7 @@ print 'Ebola already reported in Guinea on 2014-10-10:', get('GN', sdr_id=0, att
 
 # **Display the time series for a given location:**
 
-# In[81]:
+# In[13]:
 
 def plot(country_code, sdr_id, categories=ts_interpolated.category.unique(), delta=False):
     df = ts_interpolated[(ts_interpolated.country_code == country_code) & (ts_interpolated.sdr_id == sdr_id)]
@@ -311,31 +333,31 @@ plt.show()
 
 # We chose use the SIR model (classic epidemiology model) to represent how Ebola spreads:
 # 
-# $S$ stands for the non infected population, $I$ for the infected persons and $R$ for the removed people (in our case, dead people). This is where the SIR name comes from. $N$ is the population size. It models the disease evolution as follow:
+# $S$ stands for the non infected population, $I$ for the infected persons and $R$ for the removed people (dead or immune after recovery). This is where the SIR name comes from. $N$ is the population size and $D$ the number of deads. It models the disease evolution as follow:
 # 
 # For every time interval $\Delta T$:
 # 
-# $\Delta S = - \alpha S \frac{I}{N}$
+# $\Delta S = - \alpha S \frac{I}{N - D}$
 # 
-# $\alpha$ is the rate of contamination, $\frac{I}{N}$ the density of infected persons in the population and $S$ is the scale parameter
+# $\alpha$ is the rate of contamination, $\frac{I}{N - D}$ the density of infected persons in the population and $S$ is the scale parameter
 # 
-# $\Delta I = \alpha S \frac{I}{N} - \beta I$
+# $\Delta I = \alpha S \frac{I}{N - D} - \beta I$
 # 
-# $\beta$ is the rate of death of infected persons
+# $\beta$ is the rate at which people died of recover and become immune.
 # 
 # $\Delta R = \beta I$
 # 
+# The number of dead $D$ is $R * \text{ mortality rate}$ and $S = N - I - R$
+# 
 # This model is well adapted for disease that have an exponential growth (for small $I$, $\frac{S}{N}=\frac{N-I}{N} \sim 1$ and $\Delta I = cst  * I$)
 # 
-# This give us linear equations in the parameters that we are going to fit with an OLS regression. In the prediction phase, contrary to usual problems, the features $S \frac{I}{N}$ and $I$ are unobserved but can be constructed from the fitted values $\Delta I$ and $\Delta R$. This add variability to the model.
+# This give us linear equations in the parameters that we are going to fit with an OLS regression. In the prediction phase, contrary to usual problems, the features $S \frac{I}{N-D}$ and $I$ are unobserved but can be constructed from the fitted values $\Delta I$ and $\Delta R$. This add variability to the model.
 
 # ***Create the model and target matrixes:***
 
-# In[82]:
+# In[14]:
 
-def get_first(df, k):
-    # return first value in column k
-    return df.to_dict()[k].popitem()[1]
+mortality_rate = 0.7 # from general estimates. It varies from 25 to 90%
 
 def to_X_Y(country_code, sdr_id, train_limit):
     """convert data to OLS matrixes"""
@@ -343,25 +365,33 @@ def to_X_Y(country_code, sdr_id, train_limit):
     X, Y, first_day = [], [], None
     for d in sorted(df.date.unique()):
         if d > train_limit: break
-        _df = df[df.date == d]
-        infected = _df[_df.category == 'Cases']
-        if get_first(infected, 'ebola_already_reported'):
+        if get(country_code, sdr_id, 'ebola_already_reported', date=d):
             if first_day is None: first_day = d
-            recent_deaths = _df[_df.category == 'Recent Deaths']
-            deaths = _df[_df.category == 'Deaths']
-            I = get_first(infected, 'value')
-            D_recent = get_first(recent_deaths, 'value')
-            y = get_first(infected, 'delta')
-            x = [I, -I, 0]
+        
+            I = get(country_code, sdr_id, 'Cases', date=d)
+            D = get(country_code, sdr_id, 'Deaths', date=d)
+            R = D / mortality_rate
+            N = get(country_code, sdr_id, 'standardized_2014_pop')
+            r = get_ratio(I, N, R)
+            #D_recent = get(country_code, sdr_id, 'Recent Deaths', date=d)
+            y = get(country_code, sdr_id, 'Cases', date=d, delta=True)
+            x = [r, -I, 0]
             X.append(x)
             Y.append([y])
             
-            y = get_first(deaths, 'delta')
+            y = get(country_code, sdr_id, 'Deaths', date=d, delta=True) / mortality_rate
             x = [0, I, 0]
             X.append(x)
             Y.append([y])
             
     return np.array(X), np.array(Y), first_day
+
+def get_ratio(I, N, R):
+    # return the ratio (N - I - R) / N * I
+    D = R * mortality_rate
+    r = I
+    if N is not None: r = 1.0 * (N - I - R) * I / (N - D)
+    return r
 
 
 # ***Fit the model and predict:***
@@ -374,7 +404,7 @@ def to_X_Y(country_code, sdr_id, train_limit):
 # 
 # - reconstruct the cumulatives variables $I$ and $D$
 
-# In[83]:
+# In[15]:
 
 def fit_data(country_code, sdr_id, train_limit, test_limit, days_after, should_print_table):
     """
@@ -422,38 +452,45 @@ def fit_data(country_code, sdr_id, train_limit, test_limit, days_after, should_p
     df = ts_interpolated[(ts_interpolated.country_code == country_code) & (ts_interpolated.sdr_id == sdr_id) & (ts_interpolated.category == 'Deaths')]
     for d in range(train_limit - 10, train_limit):
         _df = df[df.date == d]
-        recent_deaths.append(get_first(_df, 'delta'))
+        recent_deaths.append(get(country_code, sdr_id, 'Recent Deaths', date=d, delta=True))
+    
+    I = get(country_code, sdr_id, 'Cases', date=train_limit)
+    D = get(country_code, sdr_id, 'Deaths', date=train_limit)
+    N = get(country_code, sdr_id, 'standardized_2014_pop')
+    R = D / mortality_rate
     
     # build the predicted data from the estimated rates and the past estimated data
     for i in range(test_limit - train_limit):
         data_interpolated = last_data_known.dot(results.params)
         fit = np.append(fit, data_interpolated)
         delta_I = data_interpolated[0]
-        delta_D = data_interpolated[1]
-        recent_deaths = recent_deaths[1:]
-        recent_deaths.append(delta_D)
-        last_data_known = last_data_known + np.array([[delta_I, -delta_I, 0], [0, delta_I, 0]])
+        I += delta_I
+        delta_R = data_interpolated[1]
+        R += delta_R
+        r = get_ratio(I, N, R)
+        #recent_deaths = recent_deaths[1:]
+        #recent_deaths.append(delta_D)
+        last_data_known = np.array([[r, -I, 0], [0, I, 0]])
         #last_data_known[1, 2] = sum(recent_deaths)
-        
     # get the cumulatives values from the variations
     cum_y, cum_death, delta_y, delta_death = [], [], [], []
-    y, d_recent = sum(Y[:days_after * 2:2]), sum(Y[1:days_after * 2 + 1:2])
-    if type(y) != int: y, d_recent = y[0], d_recent[0]
+    y, d = sum(Y[:days_after * 2:2]), sum(Y[1:days_after * 2 + 1:2]) * mortality_rate
+    if type(y) != int: y, d = y[0], d[0]
     for idx, v in enumerate(fit):
         if idx % 2 == 0:
             y += v
             cum_y.append(y)
             delta_y.append(v)
         else:
-            d_recent += v
-            cum_death.append(d_recent)
+            d += v * mortality_rate
+            cum_death.append(d)
             delta_death.append(v)
     return cum_y, cum_death, delta_y, delta_death, range(first_day + days_after, test_limit + 1)
 
 
 # ***Display the original and fitted values***
 
-# In[84]:
+# In[16]:
 
 def plot_fit(country_code, sdr_id, train_limit='2014-10-01', test_limit='2014-12-01', days_after=0, should_print_table=False, plot_variations=False):
     fit = fit_data(country_code, sdr_id, train_limit, test_limit, days_after, should_print_table)
@@ -490,7 +527,7 @@ plot_fit(country_code, sdr_id, days_after=30)
 # 
 # It is surprising to see the fit much higher than the target (for the number of cases) over almost all the training period. Here is the explaination: the target is not the cumulative number of case, but its variation. In the plot below, we see that the fit of the variation has no such surprising behaviour.
 
-# In[85]:
+# In[17]:
 
 plot_fit(country_code, sdr_id, days_after=20, plot_variations=True)
 plt.scatter([41913], [12], s=1000, facecolors='none', edgecolors='b');
@@ -502,7 +539,7 @@ plt.scatter([41913], [12], s=1000, facecolors='none', edgecolors='b');
 
 # **Smooth variations**
 
-# In[86]:
+# In[18]:
 
 # smooth the delta
 interpolated_data = []
@@ -525,27 +562,46 @@ for loc in time_series_dict2:
 add_recent_deaths(interpolated_data, time_series_dict2)
 
 ts_interpolated = pd.DataFrame(interpolated_data)
+g.reset_cache()
 
 
 # We now get a better approximation:
 
-# In[87]:
+# In[19]:
 
 plot_fit(country_code, sdr_id, days_after=20)
 
 
 # because the variations are better fitted:
 
-# In[88]:
+# In[20]:
 
 plot_fit(country_code, sdr_id, days_after=20, plot_variations=True)
 
+
+# **Long term simulation**
+
+# In[21]:
+
+plot_fit(country_code, sdr_id, days_after=20, test_limit='2020-12-01')
+plt.title('long term prevision for Guinea')
+ax = plt.axis()
+N = get(country_code, sdr_id, 'standardized_2014_pop')
+plt.plot([0, 100000000], [N, N], label='population')
+plt.plot([0, 100000000], [N * mortality_rate, N * mortality_rate], label='pop * death rate')
+ax = (ax[0], ax[1], ax[2], N * 1.1)
+plt.axis(ax)
+plt.legend(loc=2)
+plt.show()
+
+
+# On the long term, the number of deaths reaches the death rate * pop size: everyone has been infected and the persons left are those who made it through.
 
 ## Use the covariates
 
 # Load selected regions that have good data
 
-# In[89]:
+# In[22]:
 
 selected_regions = pd.read_csv('Selected_SDR.csv', index_col =0)
 selected_regions.head()
@@ -553,13 +609,13 @@ selected_regions.head()
 
 # Load data for Guinea that needed a special cleaning
 
-# In[90]:
+# In[23]:
 
 GN = pd.read_csv('Guinea_artificial.csv', index_col =0)
 GN.head()
 
 
-# In[69]:
+# In[123]:
 
 
 
